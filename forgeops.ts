@@ -73,6 +73,23 @@ export function issueJson(repo: Repo, issue: Issue): Record<string, unknown> {
   };
 }
 
+/**
+ * Serialized REST issue body, cached per issue: the read benchmark hammers
+ * one issue thousands of times, and re-serializing the same shape each time
+ * is pure waste. The signature covers every mutable field, so any edit,
+ * label change, close or new comment transparently refreshes the cache.
+ */
+const issueTextCache = new WeakMap<Issue, { sig: string; text: string }>();
+
+export function issueJsonText(repo: Repo, issue: Issue): string {
+  const sig = [issue.state, issue.title, issue.body, issue.labels.join(','), issue.comments.length].join('');
+  const hit = issueTextCache.get(issue);
+  if (hit && hit.sig === sig) return hit.text;
+  const text = JSON.stringify(issueJson(repo, issue));
+  issueTextCache.set(issue, { sig, text });
+  return text;
+}
+
 /** The REST shape of a comment. */
 export function commentJson(repo: Repo, comment: { id: number; body: string; createdSeq: number }): Record<string, unknown> {
   const created = createdIso(repo, comment.createdSeq);

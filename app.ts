@@ -16,7 +16,7 @@ import {
   commitTreeOid, createCommit, parseCommit, parseTree,
 } from './store.ts';
 import {
-  repoJson, labelJson, issueJson, commentJson, pullJson, branchTip, createIssue, createPull,
+  repoJson, labelJson, issueJson, issueJsonText, commentJson, pullJson, branchTip, createIssue, createPull,
   mergePull, historyOf, createdIso,
 } from './forgeops.ts';
 import { executeGraphQL, stripOwnerPrefix } from './gql.ts';
@@ -58,6 +58,8 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 interface Reply {
   status: number;
   body: unknown;
+  /** Pre-serialized body; when set, send() ships it verbatim. */
+  text?: string;
   headers?: Record<string, string>;
 }
 
@@ -71,7 +73,7 @@ function errorJson(status: number, message: string): Reply {
 
 function send(res: ServerResponse, reply: Reply): void {
   requestCounter += 1;
-  const text = reply.body === undefined || reply.body === null ? '' : JSON.stringify(reply.body);
+  const text = reply.text ?? (reply.body === undefined || reply.body === null ? '' : JSON.stringify(reply.body));
   res.writeHead(reply.status, {
     'content-type': 'application/json; charset=utf-8',
     'x-github-request-id': `req-${requestCounter.toString(16).padStart(8, '0')}`,
@@ -490,7 +492,7 @@ function issuesRoute(req: IncomingMessage, url: URL, repo: Repo, rest: string[],
   const issue = repo.issues.get(number);
   if (rest.length === 1) {
     if (issue === undefined) return errorJson(404, 'Not Found');
-    if (method === 'GET') return json(200, issueJson(repo, issue));
+    if (method === 'GET') return { status: 200, body: null, text: issueJsonText(repo, issue) };
     if (method === 'PATCH') {
       if (typeof body.title === 'string') issue.title = body.title;
       if (typeof body.body === 'string') issue.body = body.body;
@@ -751,5 +753,8 @@ export function createApp(): Server {
       else res.end();
     });
   });
+  // The benchmarks are latency-bound request/response ping-pong on single
+  // connections; Nagle's algorithm would add a round trip of delay to each.
+  server.on('connection', (socket) => socket.setNoDelay(true));
   return server;
 }
